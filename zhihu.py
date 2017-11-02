@@ -5,6 +5,8 @@ import os
 import time
 import pymysql
 import pymysql.cursors
+import csv
+import pandas as pd
 
 class Pku_Zhihu(object):
     def __init__(self):
@@ -25,29 +27,30 @@ class Pku_Zhihu(object):
 
     def connectDatabase(self):
         try:
-            self.connect = pymysql.connect(host='localhost', user='root', passwd='123456', db='zhihu', port=3306, charset='utf8')
+            self.connect = pymysql.connect(host='localhost', user='root', passwd='123456', db='俄罗斯', port=3306, charset='utf8')
             self.cursor = self.connect.cursor()
         except Exception as e:
             print ("连接数据库异常")
-
-    def clearTable(self):
-        self.connectDatabase()
-        try:
-            self.cursor.execute("truncate table authors;")
-            self.cursor.execute("truncate table questions")
-            for i in range(10):
-                answer_table_name = "answers" + str(i)
-                self.cursor.execute("truncate table %s" % answer_table_name)
-            self.connect.commit()
-        except Exception:
-            print ("清空表出错")
-        self.closeDatabase()
 
     def closeDatabase(self):
         self.cursor.close()
         self.connect.close()
 
+    def clearTable(self):
+        self.connectDatabase()
+        try:
+            self.cursor.execute("truncate table authors;")
+            self.cursor.execute("truncate table questions;")
+            for i in range(10):
+                answer_table_name = "answers" + str(i)
+                self.cursor.execute("truncate table %s;" % answer_table_name)
+            self.connect.commit()
+        except Exception:
+            print ("清空表出错")
+        self.closeDatabase()
+
     def crawlQuestion(self, question):
+        #self.showResult()
         self.connectDatabase()
         #问题信息
         try:
@@ -71,10 +74,10 @@ class Pku_Zhihu(object):
             #print (sql)
             self.cursor.execute(sql)
             self.connect.commit()
-        except Exception as e:
+        except Exception:
             print ("插入问题表出错")
-            print (e.with_traceback())
-            self.closeDatabase()
+            #print (e.with_traceback())
+            #self.closeDatabase()
             return
         else:
             self.question_num += 1
@@ -82,9 +85,10 @@ class Pku_Zhihu(object):
 
         num = 0
         for answer in question.answers:
-            if (num % 30 == 0):
-                time.sleep(1)
+            # time.sleep(1)
             num += 1
+            # if (num % 30 == 0):
+            #     time.sleep(10)
             print("正在爬取第" + str(num) + "个回答：")
             #作者信息
             author_id = answer.author.id
@@ -126,8 +130,8 @@ class Pku_Zhihu(object):
                     self.connect.commit()
                 except Exception:
                     print ("插入作者表失败")
-                    self.closeDatabase()
-                    return
+                    #self.closeDatabase()
+                    #continue
                 else:
                     print ("作者信息成功写入作者表")
                     self.author_num += 1
@@ -166,15 +170,18 @@ class Pku_Zhihu(object):
                 self.connect.commit()
             except:
                 print ("插入回答表出错:" + str(num))
-                self.closeDatabase()
-                return
+                #self.closeDatabase()
+                #continue
             else:
                 print ("爬取第" + str(num) + "个回答成功")
                 self.answer_count += 1
 
+        if (self.answer_count % 30 == 0):
+            time.sleep(1)
         self.closeDatabase()
 
     def crawlTopic(self, topic):
+
         print ("正在爬取话题： " + topic.name)
         print ("共" + str(topic.questions_count) + "个问题……")
         num = 1
@@ -185,14 +192,60 @@ class Pku_Zhihu(object):
             self.crawlQuestion(question)
             num += 1
 
-    def test(self, tid):
-        self.clearTable()
-        topic = self.client.topic(tid)
-        self.crawlTopic(topic)
+    def test(self, query):
+        filenames = os.listdir("俄罗斯话题")
+        for result in self.client.search(query, SearchType.TOPIC):
 
-    def crawl(self, query):
+            topic = result.obj
+            if topic.name + ".csv" in filenames:
+                print ("已经存在：" + topic.name)
+                continue
+            time.sleep(1)
+            print (topic.questions_count)
+            with open(topic.name + ".csv", "w", newline="") as f:
+                print ("正在写话题" + topic.name)
+                writer = csv.writer(f)
+                writer.writerow(["问题ID", "回答数"])
+                num = 0
+                for question in topic.unanswered_questions:
+                    num += 1
+                    if(num % 30 == 0):
+                        time.sleep(1)
+                        print ("正在写第" + str(num) + "行")
+                    writer.writerow([question.id, question.answer_count])
+
+    def crawlByIndex(self):
+        self.clearTable()
+        topicfile_list = os.listdir("俄罗斯话题")
+        for topicfile in topicfile_list:
+            questions = []
+            print (topicfile)
+            #获取当前话题的问题ID列表
+            print ("正在爬取话题文件" + topicfile)
+            with open(os.path.join("俄罗斯话题", topicfile)) as f:
+                f.readline()
+                num = 0
+                for line in f.readlines():
+                    q_id = int(line.strip().split(",")[0])
+                    questions.append(q_id)
+                    num += 1
+                print (str(num) + "个问题")
+            num = 0
+            for q_id in questions:
+                num += 1
+                print ("第" + str(num) + "个问题")
+                self.crawlQuestion(self.client.question(q_id))
+
+            time.sleep(5)
+
+
+
+
+
+    def crawlByQuery(self, query):
         self.clearTable()
         num = 0
+
         for result in self.client.search(query, SearchType.TOPIC):
 
             print("***********************************************************")
@@ -202,7 +255,8 @@ class Pku_Zhihu(object):
             time.sleep(5)
 
     def showResult(self):
-        print ("共爬" + str(self.question_num) + "个问题")
+        print ("----共爬取了：")
+        print (str(self.question_num) + "个问题")
         print (str(self.author_num) + "个作者")
         print (str(self.answer_count) + "个回答")
 
@@ -210,6 +264,14 @@ class Pku_Zhihu(object):
 if __name__ == "__main__":
     zhihu = Pku_Zhihu()
     zhihu.login()
-    zhihu.crawl("俄罗斯")
-    zhihu.showResult()
+    zhihu.crawlByIndex()
+    #zhihu.test("俄罗斯")
 
+    '''
+    try:
+        zhihu.crawl("俄罗斯")
+    except Exception as e:
+        print (e.with_traceback())
+    finally:
+        zhihu.showResult()
+    '''
